@@ -29,7 +29,7 @@ button{background:#38bdf8;color:#0f172a;border:none;padding:8px 16px;border-radi
     <div class="stat"><div class="val" id="tested">...</div><div class="lbl">Testées</div></div>
     <div class="stat"><div class="val" id="set">...</div><div class="lbl">Set unique</div></div>
     <div class="stat"><div class="val" id="hits">0</div><div class="lbl">Hits</div></div>
-    <div class="stat"><div class="val" id="rate">...</div><div class="lbl">/jour</div></div>
+    <div class="stat"><div class="val" id="active">...</div><div class="lbl">Actifs</div></div>
   </div>
   <button onclick="loadAll()" style="margin-top:10px">Actualiser</button>
 </div>
@@ -39,22 +39,35 @@ const services = [];
 for(let i=1;i<=20;i++){
   services.push({id:i, url: i===1 ? 'https://xm-ethereum-motors.onrender.com' : `https://xm-ethereum-motors-${i}.onrender.com`});
 }
+
+async function fetchWithTimeout(url, timeout=8000){
+  const ctrl = new AbortController();
+  const id = setTimeout(()=>ctrl.abort(), timeout);
+  try{
+    const r = await fetch(url, {mode:'cors', signal:ctrl.signal});
+    clearTimeout(id);
+    return await r.json();
+  }catch(e){
+    clearTimeout(id);
+    throw e;
+  }
+}
+
 async function loadAll(){
   let total=0, setSize=0, hits=0, active=0;
   const container = document.getElementById('services');
   container.innerHTML = '';
-  for(const s of services){
+  const promises = services.map(async s => {
     const div = document.createElement('div');
     div.className = 'svc';
-    div.innerHTML = `<div class="name">xm-${s.id}</div><div>chargement...</div>`;
+    div.innerHTML = `<div class="name">xm-${s.id}</div><div>...</div>`;
     container.appendChild(div);
     try{
-      const r = await fetch(s.url + '/api/stats', {mode:'cors'});
-      const d = await r.json();
+      const d = await fetchWithTimeout(s.url + '/api/stats');
       total = Math.max(total, d.tested||0);
       setSize = Math.max(setSize, d.set_size||0);
       hits = Math.max(hits, d.hits||0);
-      if(d.tested>0) active++;
+      if((d.tested||0)>0) active++;
       div.className = 'svc ok';
       div.innerHTML = `<div class="name">xm-${s.id}</div>
         <div>Testées: ${d.tested||0}</div>
@@ -64,15 +77,15 @@ async function loadAll(){
       div.className = 'svc ko';
       div.innerHTML = `<div class="name">xm-${s.id}</div><div>offline</div>`;
     }
-  }
+  });
+  await Promise.all(promises);
   document.getElementById('tested').textContent = total;
   document.getElementById('set').textContent = setSize;
   document.getElementById('hits').textContent = hits;
-  document.getElementById('rate').textContent = Math.round(total/86400*1000) + 'k';
+  document.getElementById('active').textContent = active + '/20';
 }
 loadAll();
-setInterval(loadAll, 15000);
-if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js");
+setInterval(loadAll, 20000);
 </script>
 </body>
 </html>
