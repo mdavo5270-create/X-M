@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-import hashlib, hmac, secrets, time, os, requests, threading, json
+import hashlib, hmac, secrets, time, os, requests, threading, json, sys
 from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from web3 import Web3
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse
 
 PORT = int(os.getenv("PORT", "10000"))
 UPSTASH_URL = os.getenv("UPSTASH_REDIS_REST_URL", "")
@@ -12,12 +12,19 @@ SEUIL = 0.00000001
 
 WORDLIST = ["abandon","ability","able","about","above","absent","absorb","abstract","absurd","abuse"] * 205
 
+def log(msg):
+    print(msg, flush=True)
+
 def redis(cmd):
-    if not UPSTASH_URL: return None
+    if not UPSTASH_URL:
+        log("REDIS URL missing")
+        return None
     try:
-        r = requests.post(UPSTASH_URL, headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}, json=cmd, timeout=4)
-        return r.json().get("result")
-    except:
+        r = requests.post(UPSTASH_URL, headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}, json=cmd, timeout=5)
+        res = r.json()
+        return res.get("result")
+    except Exception as e:
+        log(f"REDIS ERR: {e}")
         return None
 
 class Handler(BaseHTTPRequestHandler):
@@ -122,7 +129,7 @@ function sort(key){
   render();
 }
 load();
-setInterval(load, 15000);
+setInterval(load, 10000);
 </script>
 </body>
 </html>
@@ -151,31 +158,40 @@ def derive(mnemonic: str) -> str:
     return Web3().eth.account.from_key(I[:32]).address
 
 def main():
-    print("Moteur + dashboard démarré")
+    log("=== Moteur démarré ===")
+    log(f"Redis URL set: {bool(UPSTASH_URL)}")
     threading.Thread(target=health_server, daemon=True).start()
-    w3 = Web3(Web3.HTTPProvider("https://ethereum.publicnode.com"))
+    try:
+        w3 = Web3(Web3.HTTPProvider("https://ethereum.publicnode.com"))
+        log(f"Web3 connected: {w3.is_connected()}")
+    except Exception as e:
+        log(f"Web3 init error: {e}")
+        w3 = None
     n = 0
     while True:
         n += 1
-        mnemonic = generer_mnemonic()
         try:
+            mnemonic = generer_mnemonic()
             addr = derive(mnemonic)
             if deja_teste(addr):
+                if n % 20 == 0:
+                    log(f"cycle {n} skip")
                 continue
             marquer_teste(addr)
-            wei = w3.eth.get_balance(addr)
-            eth = float(w3.from_wei(wei, "ether"))
-            if eth > SEUIL:
-                payload = f"{datetime.utcnow().isoformat()}|{addr}|{mnemonic}|{eth}"
-                redis(["SET", f"hit:{addr.lower()}", payload])
-                redis(["LPUSH", "hits", addr.lower()])
-                print(f"HIT {addr} {eth}")
+            if w3:
+                wei = w3.eth.get_balance(addr)
+                eth = float(w3.from_wei(wei, "ether"))
+                if eth > SEUIL:
+                    payload = f"{datetime.utcnow().isoformat()}|{addr}|{mnemonic}|{eth}"
+                    redis(["SET", f"hit:{addr.lower()}", payload])
+                    redis(["LPUSH", "hits", addr.lower()])
+                    log(f"HIT {addr} {eth}")
         except Exception as e:
-            print("err", e)
-        if n % 40 == 0:
+            log(f"LOOP ERR: {e}")
+        if n % 20 == 0:
             count = redis(["GET", "tested_count"]) or 0
-            print(f"cycle {n} | testés: {count}")
-        time.sleep(0.15)
+            log(f"cycle {n} | testés: {count}")
+        time.sleep(0.2)
 
 if __name__ == "__main__":
     main()
