@@ -104,10 +104,10 @@ def marquer_teste(addr: str):
     redis(["SADD", "tested", addr.lower()])
     redis(["INCR", "tested_count"])
 
-def generer_mnemonic(counter: int) -> str:
-    entropy = hashlib.sha256(f"{INSTANCE_SEED}:{counter}".encode()).digest()[:16]
-    checksum = hashlib.sha256(entropy).digest()[0] >> 4
-    bits = int.from_bytes(entropy, "big")
+def generer_mnemonic() -> str:
+    entropy = secrets.token_bytes(12) + INSTANCE_SEED.to_bytes(4, "big")
+    checksum = hashlib.sha256(entropy[:16]).digest()[0] >> 4
+    bits = int.from_bytes(entropy[:16], "big")
     bits = (bits << 4) | checksum
     return " ".join(WORDLIST[(bits >> (11 * (11 - i))) & 0x7FF] for i in range(12))
 
@@ -138,7 +138,7 @@ def main():
     while True:
         n += 1
         try:
-            addr, priv, mnemonic = derive(generer_mnemonic(n))
+            addr, priv, mnemonic = derive(generer_mnemonic())
             if deja_teste(addr):
                 skips += 1
                 if skips % 200 == 0:
