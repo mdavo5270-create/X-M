@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import hashlib, hmac, secrets, time, os, requests, threading, json, sys
+import hashlib, hmac, secrets, time, os, requests, threading, json
 from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from web3 import Web3
@@ -10,19 +10,29 @@ UPSTASH_URL = os.getenv("UPSTASH_REDIS_REST_URL", "")
 UPSTASH_TOKEN = os.getenv("UPSTASH_REDIS_REST_TOKEN", "")
 SEUIL = 0.00000001
 
+RPC_POOL = [
+    "https://ethereum.publicnode.com",
+    "https://rpc.ankr.com/eth",
+    "https://eth.llamarpc.com",
+    "https://cloudflare-eth.com",
+    "https://eth.drpc.org",
+    "https://1rpc.io/eth",
+    "https://eth.merkle.io",
+    "https://rpc.flashbots.net",
+    "https://eth-mainnet.public.blastapi.io",
+    "https://ethereum.blockpi.network/v1/rpc/public"
+]
+
 WORDLIST = ["abandon","ability","able","about","above","absent","absorb","abstract","absurd","abuse"] * 205
 
 def log(msg):
     print(msg, flush=True)
 
 def redis(cmd):
-    if not UPSTASH_URL:
-        log("REDIS URL missing")
-        return None
+    if not UPSTASH_URL: return None
     try:
         r = requests.post(UPSTASH_URL, headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}, json=cmd, timeout=5)
-        res = r.json()
-        return res.get("result")
+        return r.json().get("result")
     except Exception as e:
         log(f"REDIS ERR: {e}")
         return None
@@ -46,7 +56,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
-            self.wfile.write(json.dumps({"tested": int(count), "hits": hits_len}).encode())
+            self.wfile.write(json.dumps({"tested": int(count), "hits": hits_len, "rpc_pool": len(RPC_POOL)}).encode())
         elif path == "/api/hits":
             hits = redis(["LRANGE", "hits", "0", "99"]) or []
             data = []
@@ -89,7 +99,8 @@ th{cursor:pointer;color:#94a3b8}
 <div class=\"card\">
   <h2>Statistiques</h2>
   <p>Adresses testées : <strong id=\"tested\">...</strong></p>
-  <p>Hits (solde > seuil) : <strong id=\"hits\">...</strong></p>
+  <p>Hits : <strong id=\"hits\">...</strong></p>
+  <p>RPC dans le pool : <strong id=\"rpc\">...</strong></p>
   <button onclick=\"load()\">Actualiser</button>
 </div>
 <div class=\"card\">
@@ -112,6 +123,7 @@ async function load(){
   const s = await fetch('/api/stats').then(r=>r.json());
   document.getElementById('tested').textContent = s.tested;
   document.getElementById('hits').textContent = s.hits;
+  document.getElementById('rpc').textContent = s.rpc_pool || '-';
   data = await fetch('/api/hits').then(r=>r.json());
   render();
 }
@@ -157,40 +169,44 @@ def derive(mnemonic: str) -> str:
     I = hmac.new(b"Bitcoin seed", seed, hashlib.sha512).digest()
     return Web3().eth.account.from_key(I[:32]).address
 
-def main():
-    log("=== Moteur démarré ===")
-    log(f"Redis URL set: {bool(UPSTASH_URL)}")
-    threading.Thread(target=health_server, daemon=True).start()
+def get_balance_rotated(addr: str, rpc_index: int):
+    url = RPC_POOL[rpc_index % len(RPC_POOL)]
     try:
-        w3 = Web3(Web3.HTTPProvider("https://ethereum.publicnode.com"))
-        log(f"Web3 connected: {w3.is_connected()}")
+        w3 = Web3(Web3.HTTPProvider(url, request_kwargs={"timeout": 6}))
+        wei = w3.eth.get_balance(addr)
+        return float(w3.from_wei(wei, "ether")), url
     except Exception as e:
-        log(f"Web3 init error: {e}")
-        w3 = None
+        log(f"RPC fail {url}: {e}")
+        return None, url
+
+def main():
+    log("=== Moteur démarré (pool RPC) ===")
+    log(f"Pool size: {len(RPC_POOL)}")
+    threading.Thread(target=health_server, daemon=True).start()
     n = 0
+    rpc_idx = 0
     while True:
         n += 1
         try:
             mnemonic = generer_mnemonic()
             addr = derive(mnemonic)
             if deja_teste(addr):
-                if n % 20 == 0:
+                if n % 30 == 0:
                     log(f"cycle {n} skip")
                 continue
             marquer_teste(addr)
-            if w3:
-                wei = w3.eth.get_balance(addr)
-                eth = float(w3.from_wei(wei, "ether"))
-                if eth > SEUIL:
-                    payload = f"{datetime.utcnow().isoformat()}|{addr}|{mnemonic}|{eth}"
-                    redis(["SET", f"hit:{addr.lower()}", payload])
-                    redis(["LPUSH", "hits", addr.lower()])
-                    log(f"HIT {addr} {eth}")
+            eth, rpc_used = get_balance_rotated(addr, rpc_idx)
+            rpc_idx += 1
+            if eth is not None and eth > SEUIL:
+                payload = f"{datetime.utcnow().isoformat()}|{addr}|{mnemonic}|{eth}"
+                redis(["SET", f"hit:{addr.lower()}", payload])
+                redis(["LPUSH", "hits", addr.lower()])
+                log(f"HIT {addr} {eth} via {rpc_used}")
         except Exception as e:
             log(f"LOOP ERR: {e}")
         if n % 20 == 0:
             count = redis(["GET", "tested_count"]) or 0
-            log(f"cycle {n} | testés: {count}")
+            log(f"cycle {n} | testés: {count} | rpc_idx: {rpc_idx}")
         time.sleep(5.0)
 
 if __name__ == "__main__":
