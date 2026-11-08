@@ -22,46 +22,61 @@ class HealthHandler(BaseHTTPRequestHandler):
 def health_server():
     HTTPServer(("0.0.0.0", PORT), HealthHandler).serve_forever()
 
-def mnemonic_to_seed(mnemonic: str, passphrase: str = "") -> bytes:
-    return hashlib.pbkdf2_hmac("sha512", mnemonic.encode(), ("mnemonic" + passphrase).encode(), 2048)
+def redis(cmd):
+    if not UPSTASH_URL: return None
+    try:
+        r = requests.post(UPSTASH_URL, headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}, json=cmd, timeout=4)
+        return r.json().get("result")
+    except:
+        return None
 
-def derive_eth_address(mnemonic: str) -> str:
-    seed = mnemonic_to_seed(mnemonic)
-    I = hmac.new(b"Bitcoin seed", seed, hashlib.sha512).digest()
-    key = I[:32]
-    acct = Web3().eth.account.from_key(key)
-    return acct.address
+def deja_teste(addr: str) -> bool:
+    return redis(["SISMEMBER", "tested", addr.lower()]) == 1
+
+def marquer_teste(addr: str):
+    redis(["SADD", "tested", addr.lower()])
+    redis(["INCR", "tested_count"])
 
 def generer_mnemonic() -> str:
     entropy = secrets.token_bytes(16)
     checksum = hashlib.sha256(entropy).digest()[0] >> 4
     bits = int.from_bytes(entropy, "big")
     bits = (bits << 4) | checksum
-    words = [WORDLIST[(bits >> (11 * (11 - i))) & 0x7FF] for i in range(12)]
-    return " ".join(words)
+    return " ".join(WORDLIST[(bits >> (11 * (11 - i))) & 0x7FF] for i in range(12))
+
+def derive(mnemonic: str) -> str:
+    seed = hashlib.pbkdf2_hmac("sha512", mnemonic.encode(), b"mnemonic", 2048)
+    I = hmac.new(b"Bitcoin seed", seed, hashlib.sha512).digest()
+    return Web3().eth.account.from_key(I[:32]).address
 
 def main():
-    print("Moteur BIP39 démarré")
+    print("Moteur démarré (dédup + compteur)")
     threading.Thread(target=health_server, daemon=True).start()
     w3 = Web3(Web3.HTTPProvider("https://ethereum.publicnode.com"))
-    headers = {"Authorization": f"Bearer {UPSTASH_TOKEN}"}
     n = 0
     while True:
         n += 1
         mnemonic = generer_mnemonic()
         try:
-            addr = derive_eth_address(mnemonic)
+            addr = derive(mnemonic)
+            if deja_teste(addr):
+                if n % 50 == 0:
+                    print("skip doublon")
+                continue
+            marquer_teste(addr)
             wei = w3.eth.get_balance(addr)
             eth = float(w3.from_wei(wei, "ether"))
-            if eth > SEUIL and UPSTASH_URL:
+            if eth > SEUIL:
                 payload = f"{datetime.utcnow().isoformat()}|{addr}|{mnemonic}|{eth}"
-                requests.post(UPSTASH_URL, headers=headers, json=["SET", f"hit:{addr.lower()}", payload], timeout=4)
+                redis(["SET", f"hit:{addr.lower()}", payload])
+                redis(["LPUSH", "hits", addr.lower()])
                 print(f"HIT {addr} {eth}")
         except Exception as e:
             print("err", e)
-        if n % 20 == 0:
-            print(f"cycle {n}")
-        time.sleep(0.2)
+        if n % 30 == 0:
+            count = redis(["GET", "tested_count"]) or 0
+            print(f"cycle {n} | testés: {count}")
+        time.sleep(0.15)
 
 if __name__ == "__main__":
     main()
