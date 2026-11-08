@@ -46,11 +46,15 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "text/plain")
             self.end_headers()
             self.wfile.write(b"ok")
-        elif path == "/dashboard":
+        elif path in ("/dashboard", "/dashboard_global.html"):
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.end_headers()
-            self.wfile.write(DASHBOARD_HTML.encode())
+            try:
+                with open("dashboard_global.html", "rb") as f:
+                    self.wfile.write(f.read())
+            except:
+                self.wfile.write(b"<h1>Dashboard not found</h1>")
         elif path == "/api/stats":
             count = redis(["GET", "tested_count"]) or "0"
             set_size = redis(["SCARD", "tested"]) or 0
@@ -83,75 +87,6 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
     def log_message(self, *args): pass
-
-DASHBOARD_HTML = """
-<!DOCTYPE html>
-<html lang=\"fr\">
-<head>
-<meta charset=\"UTF-8\">
-<title>X-M Dashboard</title>
-<style>
-body{font-family:system-ui;background:#0f172a;color:#e2e8f0;padding:20px}
-.card{background:#1e293b;border-radius:12px;padding:16px;margin:10px 0}
-h1{color:#38bdf8}
-table{width:100%;border-collapse:collapse;font-size:0.85em}
-th,td{padding:6px;text-align:left;border-bottom:1px solid #334155}
-th{cursor:pointer;color:#94a3b8}
-.hit{color:#4ade80}
-</style>
-</head>
-<body>
-<h1>X-M Ethereum Scanner</h1>
-<div class=\"card\">
-  <h2>Statistiques</h2>
-  <p>Adresses testées : <strong id=\"tested\">...</strong></p>
-  <p>Taille du set : <strong id=\"set_size\">...</strong></p>
-  <p>Hits : <strong id=\"hits\">...</strong></p>
-  <p>Instance : <strong id=\"instance\">...</strong></p>
-  <button onclick=\"load()\">Actualiser</button>
-</div>
-<div class=\"card\">
-  <h2>Hits (clé privée + publique + solde)</h2>
-  <table id=\"table\">
-    <thead>
-      <tr>
-        <th>Date</th>
-        <th>Adresse</th>
-        <th>Clé privée</th>
-        <th>Solde ETH</th>
-        <th>Instance</th>
-      </tr>
-    </thead>
-    <tbody id=\"tbody\"></tbody>
-  </table>
-</div>
-<script>
-let data = [];
-async function load(){
-  const s = await fetch('/api/stats').then(r=>r.json());
-  document.getElementById('tested').textContent = s.tested;
-  document.getElementById('set_size').textContent = s.set_size;
-  document.getElementById('hits').textContent = s.hits;
-  document.getElementById('instance').textContent = s.instance || '-';
-  data = await fetch('/api/hits').then(r=>r.json());
-  render();
-}
-function render(){
-  const tb = document.getElementById('tbody');
-  tb.innerHTML = data.map(d=>`<tr class=\"hit\">
-    <td>${d.date||''}</td>
-    <td>${d.address||''}</td>
-    <td style=\"font-size:0.7em\">${d.private_key||''}</td>
-    <td>${d.balance||0}</td>
-    <td>${d.instance||''}</td>
-  </tr>`).join('') || '<tr><td colspan=\"5\">Aucun hit pour le moment</td></tr>';
-}
-load();
-setInterval(load, 10000);
-</script>
-</body>
-</html>
-"""
 
 def health_server():
     HTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
