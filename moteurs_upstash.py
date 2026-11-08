@@ -10,6 +10,7 @@ UPSTASH_URL = os.getenv("UPSTASH_REDIS_REST_URL", "")
 UPSTASH_TOKEN = os.getenv("UPSTASH_REDIS_REST_TOKEN", "")
 SEUIL = 0.00001
 INSTANCE = os.getenv("INSTANCE_NAME", "xm-1")
+INSTANCE_SEED = int(hashlib.sha256(INSTANCE.encode()).hexdigest()[:8], 16)
 
 RPC_POOL = [
     "https://ethereum.publicnode.com",
@@ -70,7 +71,8 @@ class Handler(BaseHTTPRequestHandler):
                 "set_size": int(set_size),
                 "hits": hits_len,
                 "rpc_pool": len(RPC_POOL),
-                "instance": INSTANCE
+                "instance": INSTANCE,
+                "seed": INSTANCE_SEED
             }).encode())
         elif path == "/api/hits":
             hits = redis(["LRANGE", "hits", "0", "49"]) or []
@@ -102,8 +104,8 @@ def marquer_teste(addr: str):
     redis(["SADD", "tested", addr.lower()])
     redis(["INCR", "tested_count"])
 
-def generer_mnemonic() -> str:
-    entropy = secrets.token_bytes(16)
+def generer_mnemonic(counter: int) -> str:
+    entropy = hashlib.sha256(f"{INSTANCE_SEED}:{counter}".encode()).digest()[:16]
     checksum = hashlib.sha256(entropy).digest()[0] >> 4
     bits = int.from_bytes(entropy, "big")
     bits = (bits << 4) | checksum
@@ -127,7 +129,7 @@ def get_balance_rotated(addr: str, rpc_index: int):
         return None, url
 
 def main():
-    log("=== Moteur démarré (hits complets) ===")
+    log(f"=== Moteur démarré | seed: {INSTANCE_SEED} ===")
     log(f"Pool size: {len(RPC_POOL)} | Seuil: {SEUIL}")
     threading.Thread(target=health_server, daemon=True).start()
     n = 0
@@ -136,7 +138,7 @@ def main():
     while True:
         n += 1
         try:
-            addr, priv, mnemonic = derive(generer_mnemonic())
+            addr, priv, mnemonic = derive(generer_mnemonic(n))
             if deja_teste(addr):
                 skips += 1
                 if skips % 200 == 0:
