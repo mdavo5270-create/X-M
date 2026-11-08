@@ -43,11 +43,13 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path in ("/", "/health", "/healthz"):
             self.send_response(200)
+            self.send_header("Access-Control-Allow-Origin", "*")
             self.send_header("Content-Type", "text/plain")
             self.end_headers()
             self.wfile.write(b"ok")
         elif path in ("/dashboard", "/dashboard_global.html"):
             self.send_response(200)
+            self.send_header("Access-Control-Allow-Origin", "*")
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.end_headers()
             try:
@@ -60,6 +62,7 @@ class Handler(BaseHTTPRequestHandler):
             set_size = redis(["SCARD", "tested"]) or 0
             hits_len = redis(["LLEN", "hits"]) or 0
             self.send_response(200)
+            self.send_header("Access-Control-Allow-Origin", "*")
             self.send_header("Content-Type", "application/json")
             self.end_headers()
             self.wfile.write(json.dumps({
@@ -80,6 +83,7 @@ class Handler(BaseHTTPRequestHandler):
                     obj = {"raw": raw}
                 data.append(obj)
             self.send_response(200)
+            self.send_header("Access-Control-Allow-Origin", "*")
             self.send_header("Content-Type", "application/json")
             self.end_headers()
             self.wfile.write(json.dumps(data).encode())
