@@ -53,11 +53,18 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(DASHBOARD_HTML.encode())
         elif path == "/api/stats":
             count = redis(["GET", "tested_count"]) or "0"
+            set_size = redis(["SCARD", "tested"]) or 0
             hits_len = redis(["LLEN", "hits"]) or 0
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
-            self.wfile.write(json.dumps({"tested": int(count), "hits": hits_len, "rpc_pool": len(RPC_POOL), "instance": INSTANCE}).encode())
+            self.wfile.write(json.dumps({
+                "tested": int(count),
+                "set_size": int(set_size),
+                "hits": hits_len,
+                "rpc_pool": len(RPC_POOL),
+                "instance": INSTANCE
+            }).encode())
         elif path == "/api/hits":
             hits = redis(["LRANGE", "hits", "0", "99"]) or []
             data = []
@@ -99,7 +106,8 @@ th{cursor:pointer;color:#94a3b8}
 <h1>X-M Ethereum Scanner</h1>
 <div class=\"card\">
   <h2>Statistiques</h2>
-  <p>Adresses testées : <strong id=\"tested\">...</strong></p>
+  <p>Adresses testées (compteur) : <strong id=\"tested\">...</strong></p>
+  <p>Taille du set (dédup) : <strong id=\"set_size\">...</strong></p>
   <p>Hits : <strong id=\"hits\">...</strong></p>
   <p>RPC dans le pool : <strong id=\"rpc\">...</strong></p>
   <p>Instance : <strong id=\"instance\">...</strong></p>
@@ -124,6 +132,7 @@ let data = [];
 async function load(){
   const s = await fetch('/api/stats').then(r=>r.json());
   document.getElementById('tested').textContent = s.tested;
+  document.getElementById('set_size').textContent = s.set_size;
   document.getElementById('hits').textContent = s.hits;
   document.getElementById('rpc').textContent = s.rpc_pool || '-';
   document.getElementById('instance').textContent = s.instance || '-';
@@ -154,7 +163,8 @@ def health_server():
     HTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
 
 def deja_teste(addr: str) -> bool:
-    return redis(["SISMEMBER", "tested", addr.lower()]) == 1
+    result = redis(["SISMEMBER", "tested", addr.lower()])
+    return result == 1
 
 def marquer_teste(addr: str):
     redis(["SADD", "tested", addr.lower()])
@@ -183,19 +193,21 @@ def get_balance_rotated(addr: str, rpc_index: int):
         return None, url
 
 def main():
-    log("=== Moteur démarré (partagé) ===")
+    log("=== Moteur démarré (dédup stricte) ===")
     log(f"Pool size: {len(RPC_POOL)}")
     threading.Thread(target=health_server, daemon=True).start()
     n = 0
     rpc_idx = 0
+    skips = 0
     while True:
         n += 1
         try:
             mnemonic = generer_mnemonic()
             addr = derive(mnemonic)
             if deja_teste(addr):
-                if n % 50 == 0:
-                    log(f"cycle {n} skip")
+                skips += 1
+                if skips % 100 == 0:
+                    log(f"skips cumulés: {skips}")
                 continue
             marquer_teste(addr)
             eth, rpc_used = get_balance_rotated(addr, rpc_idx)
@@ -207,9 +219,10 @@ def main():
                 log(f"HIT {addr} {eth} via {rpc_used}")
         except Exception as e:
             log(f"LOOP ERR: {e}")
-        if n % 30 == 0:
+        if n % 40 == 0:
             count = redis(["GET", "tested_count"]) or 0
-            log(f"cycle {n} | testés: {count}")
+            set_size = redis(["SCARD", "tested"]) or 0
+            log(f"cycle {n} | testés: {count} | set: {set_size} | skips: {skips}")
         time.sleep(0.15)
 
 if __name__ == "__main__":
