@@ -191,7 +191,7 @@ def main():
         if n % 20 == 0:
             count = redis(["GET", "tested_count"]) or 0
             log(f"cycle {n} | testés: {count}")
-        time.sleep(0.2)
+        time.sleep(2.0)
 
 if __name__ == "__main__":
     main()
