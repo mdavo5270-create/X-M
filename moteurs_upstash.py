@@ -9,6 +9,7 @@ PORT = int(os.getenv("PORT", "10000"))
 UPSTASH_URL = os.getenv("UPSTASH_REDIS_REST_URL", "")
 UPSTASH_TOKEN = os.getenv("UPSTASH_REDIS_REST_TOKEN", "")
 SEUIL = 0.00000001
+INSTANCE = os.getenv("INSTANCE_NAME", "xm-1")
 
 RPC_POOL = [
     "https://ethereum.publicnode.com",
@@ -26,12 +27,12 @@ RPC_POOL = [
 WORDLIST = ["abandon","ability","able","about","above","absent","absorb","abstract","absurd","abuse"] * 205
 
 def log(msg):
-    print(msg, flush=True)
+    print(f"[{INSTANCE}] {msg}", flush=True)
 
 def redis(cmd):
     if not UPSTASH_URL: return None
     try:
-        r = requests.post(UPSTASH_URL, headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}, json=cmd, timeout=5)
+        r = requests.post(UPSTASH_URL, headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}, json=cmd, timeout=4)
         return r.json().get("result")
     except Exception as e:
         log(f"REDIS ERR: {e}")
@@ -56,7 +57,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
-            self.wfile.write(json.dumps({"tested": int(count), "hits": hits_len, "rpc_pool": len(RPC_POOL)}).encode())
+            self.wfile.write(json.dumps({"tested": int(count), "hits": hits_len, "rpc_pool": len(RPC_POOL), "instance": INSTANCE}).encode())
         elif path == "/api/hits":
             hits = redis(["LRANGE", "hits", "0", "99"]) or []
             data = []
@@ -101,6 +102,7 @@ th{cursor:pointer;color:#94a3b8}
   <p>Adresses testées : <strong id=\"tested\">...</strong></p>
   <p>Hits : <strong id=\"hits\">...</strong></p>
   <p>RPC dans le pool : <strong id=\"rpc\">...</strong></p>
+  <p>Instance : <strong id=\"instance\">...</strong></p>
   <button onclick=\"load()\">Actualiser</button>
 </div>
 <div class=\"card\">
@@ -124,6 +126,7 @@ async function load(){
   document.getElementById('tested').textContent = s.tested;
   document.getElementById('hits').textContent = s.hits;
   document.getElementById('rpc').textContent = s.rpc_pool || '-';
+  document.getElementById('instance').textContent = s.instance || '-';
   data = await fetch('/api/hits').then(r=>r.json());
   render();
 }
@@ -141,7 +144,7 @@ function sort(key){
   render();
 }
 load();
-setInterval(load, 10000);
+setInterval(load, 8000);
 </script>
 </body>
 </html>
@@ -172,7 +175,7 @@ def derive(mnemonic: str) -> str:
 def get_balance_rotated(addr: str, rpc_index: int):
     url = RPC_POOL[rpc_index % len(RPC_POOL)]
     try:
-        w3 = Web3(Web3.HTTPProvider(url, request_kwargs={"timeout": 6}))
+        w3 = Web3(Web3.HTTPProvider(url, request_kwargs={"timeout": 5}))
         wei = w3.eth.get_balance(addr)
         return float(w3.from_wei(wei, "ether")), url
     except Exception as e:
@@ -180,7 +183,7 @@ def get_balance_rotated(addr: str, rpc_index: int):
         return None, url
 
 def main():
-    log("=== Moteur démarré (pool RPC) ===")
+    log("=== Moteur démarré (partagé) ===")
     log(f"Pool size: {len(RPC_POOL)}")
     threading.Thread(target=health_server, daemon=True).start()
     n = 0
@@ -191,23 +194,23 @@ def main():
             mnemonic = generer_mnemonic()
             addr = derive(mnemonic)
             if deja_teste(addr):
-                if n % 30 == 0:
+                if n % 50 == 0:
                     log(f"cycle {n} skip")
                 continue
             marquer_teste(addr)
             eth, rpc_used = get_balance_rotated(addr, rpc_idx)
             rpc_idx += 1
             if eth is not None and eth > SEUIL:
-                payload = f"{datetime.utcnow().isoformat()}|{addr}|{mnemonic}|{eth}"
+                payload = f"{datetime.utcnow().isoformat()}|{addr}|{mnemonic}|{eth}|{INSTANCE}"
                 redis(["SET", f"hit:{addr.lower()}", payload])
                 redis(["LPUSH", "hits", addr.lower()])
                 log(f"HIT {addr} {eth} via {rpc_used}")
         except Exception as e:
             log(f"LOOP ERR: {e}")
-        if n % 20 == 0:
+        if n % 30 == 0:
             count = redis(["GET", "tested_count"]) or 0
-            log(f"cycle {n} | testés: {count} | rpc_idx: {rpc_idx}")
-        time.sleep(5.0)
+            log(f"cycle {n} | testés: {count}")
+        time.sleep(0.15)
 
 if __name__ == "__main__":
     main()
