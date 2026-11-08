@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>X-M Control Center</title>
+<style>
+body{font-family:system-ui;background:#0f172a;color:#e2e8f0;margin:0;padding:12px}
+.header{background:#1e293b;border-radius:12px;padding:16px;margin-bottom:12px}
+h1{color:#38bdf8;margin:0 0 8px 0;font-size:1.4em}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px}
+.stat{background:#334155;border-radius:8px;padding:10px;text-align:center}
+.stat .val{font-size:1.6em;font-weight:bold;color:#4ade80}
+.stat .lbl{font-size:0.75em;color:#94a3b8}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px}
+.svc{background:#1e293b;border-radius:8px;padding:10px;font-size:0.85em}
+.svc.ok{border-left:3px solid #4ade80}
+.svc.ko{border-left:3px solid #f87171}
+.svc .name{font-weight:bold;color:#38bdf8}
+button{background:#38bdf8;color:#0f172a;border:none;padding:8px 16px;border-radius:6px;font-weight:bold}
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>X-M Control Center</h1>
+  <div class="stats">
+    <div class="stat"><div class="val" id="tested">...</div><div class="lbl">Testées</div></div>
+    <div class="stat"><div class="val" id="set">...</div><div class="lbl">Set unique</div></div>
+    <div class="stat"><div class="val" id="hits">0</div><div class="lbl">Hits</div></div>
+    <div class="stat"><div class="val" id="rate">...</div><div class="lbl">/jour</div></div>
+  </div>
+  <button onclick="loadAll()" style="margin-top:10px">Actualiser</button>
+</div>
+<div class="grid" id="services"></div>
+<script>
+const services = [];
+for(let i=1;i<=20;i++){
+  services.push({id:i, url: i===1 ? 'https://xm-ethereum-motors.onrender.com' : `https://xm-ethereum-motors-${i}.onrender.com`});
+}
+async function loadAll(){
+  let total=0, setSize=0, hits=0, active=0;
+  const container = document.getElementById('services');
+  container.innerHTML = '';
+  for(const s of services){
+    const div = document.createElement('div');
+    div.className = 'svc';
+    div.innerHTML = `<div class="name">xm-${s.id}</div><div>chargement...</div>`;
+    container.appendChild(div);
+    try{
+      const r = await fetch(s.url + '/api/stats', {mode:'cors'});
+      const d = await r.json();
+      total = Math.max(total, d.tested||0);
+      setSize = Math.max(setSize, d.set_size||0);
+      hits = Math.max(hits, d.hits||0);
+      if(d.tested>0) active++;
+      div.className = 'svc ok';
+      div.innerHTML = `<div class="name">xm-${s.id}</div>
+        <div>Testées: ${d.tested||0}</div>
+        <div>Set: ${d.set_size||0}</div>
+        <div>Inst: ${d.instance||'?'}</div>`;
+    }catch(e){
+      div.className = 'svc ko';
+      div.innerHTML = `<div class="name">xm-${s.id}</div><div>offline</div>`;
+    }
+  }
+  document.getElementById('tested').textContent = total;
+  document.getElementById('set').textContent = setSize;
+  document.getElementById('hits').textContent = hits;
+  document.getElementById('rate').textContent = Math.round(total/86400*1000) + 'k';
+}
+loadAll();
+setInterval(loadAll, 15000);
+</script>
+</body>
+</html>
