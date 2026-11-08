@@ -3,6 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#38bdf8">
 <title>X-M Control Center</title>
 <style>
 body{font-family:system-ui;background:#0f172a;color:#e2e8f0;margin:0;padding:12px}
@@ -70,6 +72,7 @@ async function loadAll(){
 }
 loadAll();
 setInterval(loadAll, 15000);
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js");
 </script>
 </body>
 </html>
